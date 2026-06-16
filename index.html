@@ -361,7 +361,18 @@
     <hr class="panel-divider" />
 
     <p class="section-label">朗讀：</p>
-    <label class="toggle-row" for="repeatToggle">
+    <label class="toggle-row" for="autoPlayToggle">
+      <span class="toggle-text">
+        <span class="toggle-title">自動播放</span>
+        <span class="toggle-sub">自動換下一個詞</span>
+      </span>
+      <span class="toggle-switch">
+        <input type="checkbox" id="autoPlayToggle" />
+        <span class="toggle-track"></span>
+        <span class="toggle-thumb"></span>
+      </span>
+    </label>
+    <label class="toggle-row" for="repeatToggle" style="margin-top:18px;">
       <span class="toggle-text">
         <span class="toggle-title">自動讀兩次</span>
         <span class="toggle-sub">每次朗讀連讀兩次</span>
@@ -384,6 +395,7 @@
   const SPEECH_PITCH  = 1.1;
   const CHAR_GAP_MS   = 420;    // 每個字之間嘅停頓
   const REPEAT_GAP_MS = 650;    // 「自動讀兩次」時，兩遍之間嘅停頓
+  const AUTO_NEXT_MS  = 1600;   // 「自動播放」時，讀完到換下一個詞嘅停頓
 
   /* ── State ──────────────────────────────────────────────── */
   let categories = [];          // [{name, words:[...]}]
@@ -391,6 +403,8 @@
   let currentMode = localStorage.getItem('mode') || 'cat-seq';
   let currentCatIdx = parseInt(localStorage.getItem('catIdx') || '0', 10);
   let repeatTwice = localStorage.getItem('repeatTwice') === 'true';
+  let autoPlay = localStorage.getItem('autoPlay') === 'true';
+  let autoTimer = null;
   let seqIdx = -1;              // 分類順序用嘅指標
   let currentWord = '';
   let playToken = 0;           // 中止舊播放
@@ -409,6 +423,7 @@
   const catGroup  = document.getElementById('catGroup');
   const forceRefreshBtn = document.getElementById('forceRefreshBtn');
   const repeatToggle = document.getElementById('repeatToggle');
+  const autoPlayToggle = document.getElementById('autoPlayToggle');
 
   /* ── Voice cache (沿用參考做法) ─────────────────────────── */
   let cachedVoices = [];
@@ -491,21 +506,34 @@
     speechSynthesis.cancel();
     const passes = repeatTwice ? 2 : 1;
     for (let p = 0; p < passes; p++) {
-      if (token !== playToken) return;           // 被新播放中止
+      if (token !== playToken) return false;     // 被新播放中止
       if (p > 0) {                               // 兩遍之間停頓
         await sleep(REPEAT_GAP_MS);
-        if (token !== playToken) return;
+        if (token !== playToken) return false;
       }
       const chars = wordEl.querySelectorAll('.char');
       for (let i = 0; i < chars.length; i++) {
-        if (token !== playToken) return;
+        if (token !== playToken) return false;
         clearHighlight();
         chars[i].classList.add('active');
         await speakChar(word[i]);
-        if (token !== playToken) return;
+        if (token !== playToken) return false;
         await sleep(CHAR_GAP_MS);                // 字與字之間停頓
       }
       if (token === playToken) clearHighlight();
+    }
+    return true;                                 // 完整播完
+  }
+
+  /* ── 播放（播完如開咗自動播放就排下一個詞）─────────────── */
+  function clearAuto() { if (autoTimer) { clearTimeout(autoTimer); autoTimer = null; } }
+
+  async function play(word) {
+    clearAuto();
+    const completed = await speakWord(word);
+    if (autoPlay && completed) {
+      clearAuto();
+      autoTimer = setTimeout(showNext, AUTO_NEXT_MS);
     }
   }
 
@@ -517,7 +545,7 @@
     wordEl.classList.remove('pop');
     void wordEl.offsetWidth;
     wordEl.classList.add('pop');
-    speakWord(word);
+    play(word);
   }
 
   /* ── 把詞語縮放到啱螢幕 ─────────────────────────────────── */
@@ -619,18 +647,19 @@
     showNext();
   }
 
-  function openSettings()  { settingsPanel.classList.add('open'); backdrop.classList.add('open'); }
+  function openSettings()  { clearAuto(); settingsPanel.classList.add('open'); backdrop.classList.add('open'); }
   function closeSettings(replay) {
     settingsPanel.classList.remove('open');
     backdrop.classList.remove('open');
-    if (replay && currentWord) speakWord(currentWord);
+    if (autoPlay && currentWord) play(currentWord);        // 續播自動播放
+    else if (replay && currentWord) speakWord(currentWord);
   }
 
   /* ── Event listeners ────────────────────────────────────── */
   refreshBtn.addEventListener('click', showNext);
-  wordWrap.addEventListener('click', () => { if (currentWord) speakWord(currentWord); });
+  wordWrap.addEventListener('click', () => { if (currentWord) play(currentWord); });
   wordWrap.addEventListener('keydown', e => {
-    if (e.key === 'Enter' || e.key === ' ') { if (currentWord) speakWord(currentWord); }
+    if (e.key === 'Enter' || e.key === ' ') { if (currentWord) play(currentWord); }
   });
   settingsBtn.addEventListener('click', openSettings);
   backdrop.addEventListener('click', () => closeSettings(false));
@@ -639,6 +668,12 @@
   repeatToggle.addEventListener('change', () => {
     repeatTwice = repeatToggle.checked;
     localStorage.setItem('repeatTwice', repeatTwice);
+  });
+  autoPlayToggle.addEventListener('change', () => {
+    autoPlay = autoPlayToggle.checked;
+    localStorage.setItem('autoPlay', autoPlay);
+    if (autoPlay) { if (currentWord) play(currentWord); }   // 即刻開始
+    else clearAuto();                                       // 即刻停
   });
   modeGroup.querySelectorAll('.radio-option').forEach(o => {
     o.addEventListener('click', () => selectMode(o.dataset.mode));
@@ -668,6 +703,7 @@
     buildCatRadios();
     updateModeUI();
     repeatToggle.checked = repeatTwice;
+    autoPlayToggle.checked = autoPlay;
 
     setTimeout(showNext, 120);
   }
