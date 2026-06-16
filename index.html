@@ -264,6 +264,46 @@
       background: #333;
       transform: scale(0.97);
     }
+
+    /* ── Toggle switch ─────────────────────────────────────── */
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      cursor: pointer;
+      padding: 4px 0;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .toggle-text { display: flex; flex-direction: column; gap: 3px; }
+    .toggle-title { font-size: 18px; font-weight: 700; }
+    .toggle-sub   { font-size: 12px; font-weight: 400; opacity: 0.55; }
+    .toggle-switch {
+      position: relative;
+      width: 52px; height: 30px;
+      flex-shrink: 0;
+    }
+    .toggle-switch input { position: absolute; opacity: 0; width: 0; height: 0; }
+    .toggle-track {
+      position: absolute; inset: 0;
+      border-radius: 30px;
+      border: 2px solid #000;
+      background: #fff;
+      transition: background 0.2s;
+    }
+    .toggle-switch input:checked + .toggle-track { background: #000; }
+    .toggle-thumb {
+      position: absolute;
+      top: 3px; left: 3px;
+      width: 20px; height: 20px;
+      border-radius: 50%;
+      background: #000;
+      transition: transform 0.2s;
+      pointer-events: none;
+    }
+    .toggle-switch input:checked + .toggle-track + .toggle-thumb {
+      transform: translateX(22px);
+      background: #fff;
+    }
   </style>
 </head>
 <body>
@@ -320,6 +360,21 @@
 
     <hr class="panel-divider" />
 
+    <p class="section-label">朗讀：</p>
+    <label class="toggle-row" for="repeatToggle">
+      <span class="toggle-text">
+        <span class="toggle-title">自動讀兩次</span>
+        <span class="toggle-sub">每次朗讀連讀兩次</span>
+      </span>
+      <span class="toggle-switch">
+        <input type="checkbox" id="repeatToggle" />
+        <span class="toggle-track"></span>
+        <span class="toggle-thumb"></span>
+      </span>
+    </label>
+
+    <hr class="panel-divider" />
+
     <button id="forceRefreshBtn">↻ 重新載入</button>
   </div>
 
@@ -328,12 +383,14 @@
   const SPEECH_RATE   = 0.6;    // 慢語速
   const SPEECH_PITCH  = 1.1;
   const CHAR_GAP_MS   = 420;    // 每個字之間嘅停頓
+  const REPEAT_GAP_MS = 650;    // 「自動讀兩次」時，兩遍之間嘅停頓
 
   /* ── State ──────────────────────────────────────────────── */
   let categories = [];          // [{name, words:[...]}]
   let allWords   = [];          // [{word, cat}] 供「全部隨機」用
   let currentMode = localStorage.getItem('mode') || 'cat-seq';
   let currentCatIdx = parseInt(localStorage.getItem('catIdx') || '0', 10);
+  let repeatTwice = localStorage.getItem('repeatTwice') === 'true';
   let seqIdx = -1;              // 分類順序用嘅指標
   let currentWord = '';
   let playToken = 0;           // 中止舊播放
@@ -351,6 +408,7 @@
   const modeGroup = document.getElementById('modeGroup');
   const catGroup  = document.getElementById('catGroup');
   const forceRefreshBtn = document.getElementById('forceRefreshBtn');
+  const repeatToggle = document.getElementById('repeatToggle');
 
   /* ── Voice cache (沿用參考做法) ─────────────────────────── */
   let cachedVoices = [];
@@ -431,16 +489,24 @@
   async function speakWord(word) {
     const token = ++playToken;
     speechSynthesis.cancel();
-    const chars = wordEl.querySelectorAll('.char');
-    for (let i = 0; i < chars.length; i++) {
-      if (token !== playToken) return;          // 被新播放中止
-      clearHighlight();
-      chars[i].classList.add('active');
-      await speakChar(word[i]);
-      if (token !== playToken) return;
-      await sleep(CHAR_GAP_MS);                  // 字與字之間停頓
+    const passes = repeatTwice ? 2 : 1;
+    for (let p = 0; p < passes; p++) {
+      if (token !== playToken) return;           // 被新播放中止
+      if (p > 0) {                               // 兩遍之間停頓
+        await sleep(REPEAT_GAP_MS);
+        if (token !== playToken) return;
+      }
+      const chars = wordEl.querySelectorAll('.char');
+      for (let i = 0; i < chars.length; i++) {
+        if (token !== playToken) return;
+        clearHighlight();
+        chars[i].classList.add('active');
+        await speakChar(word[i]);
+        if (token !== playToken) return;
+        await sleep(CHAR_GAP_MS);                // 字與字之間停頓
+      }
+      if (token === playToken) clearHighlight();
     }
-    if (token === playToken) clearHighlight();
   }
 
   /* ── 顯示一個詞語 ───────────────────────────────────────── */
@@ -570,6 +636,10 @@
   backdrop.addEventListener('click', () => closeSettings(false));
   closeBtn.addEventListener('click', () => closeSettings(true));
   forceRefreshBtn.addEventListener('click', () => location.reload());
+  repeatToggle.addEventListener('change', () => {
+    repeatTwice = repeatToggle.checked;
+    localStorage.setItem('repeatTwice', repeatTwice);
+  });
   modeGroup.querySelectorAll('.radio-option').forEach(o => {
     o.addEventListener('click', () => selectMode(o.dataset.mode));
   });
@@ -597,6 +667,7 @@
     msgEl.style.display = 'none';
     buildCatRadios();
     updateModeUI();
+    repeatToggle.checked = repeatTwice;
 
     setTimeout(showNext, 120);
   }
